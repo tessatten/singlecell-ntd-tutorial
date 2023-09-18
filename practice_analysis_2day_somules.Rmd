@@ -1,0 +1,347 @@
+---
+title: "practice_analysis_2day_somules"
+author: "T Attenborough"
+date: "2023-09-14"
+output: html_document
+---
+
+The first step is to install the packages we are going to need for this script. Run the two below chunks to install the packages you'll need. You only need to install the packages once. This might take a few minutes as the libraries can be large. 
+
+The first chunk sets up a function to check if packages are installed, install them if not and load them. The second chunk takes a list of the packages we'll need, and runs the function on them. After these two chunks, you should have loaded all the libraries you'll need.
+
+```{r}
+# function to check install and load packages
+load_library <- function(pkg) {
+  # check if package is installed
+  new_package <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  
+  # install any new packages
+  if (length(new_package)) 
+    install.packages(new_package, dependencies = TRUE, Ncpus = 6)
+  
+  # sapply to loop through and load packages
+  invisible(sapply(pkg, library, character.only = TRUE))
+  
+  # give message confirming load
+  message("The following packages are now loaded")
+  print(names(sessionInfo()$otherPkgs))
+}
+```
+
+Now, load the packages that you'll use in the session. Run this chunk each time you open R and and want to use this script.
+
+```{r}
+# use test
+packages <- c('tidyverse', 'Seurat', 'RColorBrewer', 'patchwork', 'clustree', 'patchwork', 'scDblFinder', 'BiocParallel', 'SingleCellExperiment')
+load_library(packages)
+```
+
+Some packages may be more niche, and have more specific installation instructions, such as the below package for detecting doublets.
+```{r}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("scDblFinder")
+```
+
+And now you can load it.
+```{r}
+library(scDblFinder)
+```
+
+
+Here we save an object that contains today's date, so we can save any files with the date automatically.
+
+```{r}
+st=format(Sys.time(), "%Y-%m-%d") 
+st
+```
+
+
+Next, we import the data files that contain the mapping outputs from Cellranger. There are three folders, from the three samples which were sequenced. Each folder contains the list of genes, the cell barcodes, and the count matrix showing the number of transcripts.
+
+Since the we used 10X sequecning, we import yhis into R using the specific 10X import function.
+
+```{r}
+sample1.data <- Read10X('/Users/ta13/carmen_day2somule_v10/sample1/filtered_feature_bc_matrix/')
+sample2.data <- Read10X('/Users/ta13/carmen_day2somule_v10/sample2/filtered_feature_bc_matrix/')
+sample3.data <- Read10X('/Users/ta13/carmen_day2somule_v10/sample3/filtered_feature_bc_matrix/')
+
+```
+
+How does this looks to start with?
+
+```{r}
+sample1.data
+```
+
+Here you can see that the three files have been combined into a transcript count matrix, with cell barcodes across the top, and gene IDs down the left hand side. 
+
+Seurat is a widely used R package for single cell analysis. This function converts the matrix above into a 'Seurat object'. This allows you to perform a variety of analyses, and store metadata and analysis results all together. Here I'm also filtering out any cells with less than 300 genes detected, and any genes in less than 3 cell, to pre-filter out any really low quality cells and reduce noise. I'm also adding the information to each Seurat object of which sample it comes from.
+```{r}
+sample1 <- CreateSeuratObject(counts = sample1.data, project = "sample1", min.cells = 3, min.features = 300)
+sample2 <- CreateSeuratObject(counts = sample2.data, project = "sample2", min.cells = 3, min.features = 300)
+sample3 <- CreateSeuratObject(counts = sample3.data, project = "sample3", min.cells = 3, min.features = 300)
+```
+
+Note the above warning. For Schistosoma mansoni, gene IDs are start with Smp and are linked to a six digit number by an underscore, e.g. Smp_349530. Seurat is not set up to accept underscores in gene names, so converts them to underscores, e.g. Smp-349530. This is important when linking our analysis back to the genome.
+
+How do these look now?
+```{r}
+sample1
+```
+
+So here can see that there are 8,105 genes detected in this sample, and there are 1,724 cells.
+
+
+How can you access the genes in this object?
+```{r}
+head(rownames(sample1))
+```
+
+How can you access the genes in this object?
+```{r}
+head(colnames(sample1))
+```
+
+How can you access metadata, such as which sample this object came from?
+```{r}
+head(sample1@meta.data$orig.ident)
+```
+
+For today, we are going to combine all three of our samples simply, and run through an analysis of all three. Later on we'll be able to look at how similar the three samples are to each other. I usually with also run an analysis of each sample individually to make sure I understand the data, and the variability.
+
+This creates one object that contains all three samples.
+```{r}
+day2somules <- merge(sample1, y = c(sample2, sample3), add.cell.ids = c("sample1", "sample2", "sample3"), project = "day2somules")
+day2somules
+```
+
+
+Now there are 8,347 genes detected across this experiment, and there are 4,224 cells.
+
+Can we still which cells came from which sample? Let's make sure by adding a metadata column to the combined Seurat object
+```{r}
+day2somules@meta.data$batches = ifelse(grepl("2_", rownames(day2somules@meta.data)), "batch2", ifelse(grepl("3_", rownames(day2somules@meta.data)), "batch3", "batch1"))
+```
+
+How can you access the genes in this object? How have these changed?
+```{r}
+head(colnames(day2somules))
+```
+
+Let's look at the metadata we've added
+```{r}
+table(day2somules@meta.data$batches)
+```
+
+You can check that that these numbers correspond correctly with the number of cells in individual sample objects above
+```{r}
+sample1
+sample2
+sample3
+```
+
+Doublets, or multiplets, form when two or more cells are associated with one cell barcode - for example you might have a 'cell' in your data that looks like a hybrid of a muscle and a neural cell. Since these don't describe a cell type found in the sample, we want to exlude these cells as much as possible. There are many tools/strategies, the below tool assigns each cell a doublet score, and assigns cells as doublets or singlets based on these scores and the expected percentage of doublets.
+
+This requires the packages 'scDblFinder', 'BiocParallel', 'SingleCellExperiment', if you have any trouble installing them, you can follow along here and import the QC-filtered object whe we move onto the next stage of analysis.
+
+```{r}
+day2somules.sce <- as.SingleCellExperiment(day2somules)
+day2somules.sce <- scDblFinder(day2somules.sce, samples=day2somules.sce$batches, BPPARAM=MulticoreParam(3))
+
+table(day2somules.sce$scDblFinder.class)
+
+day2somules <- as.Seurat(day2somules.sce)
+```
+
+This has added another column of metadata to our data, which will be helpful later.
+
+
+We commonly use % of mitochondrial transcripts to screen for dead/damaged cells - we want to exclude these kinds of cells. Thresholds of % mitochondrial reads vary, and for most non-model organisms there isn't an established threshold - the optimal threshold will also vary between tissue types.
+
+This code chunk will calculate the percentage of transcripts mapping to mitochondrial genes: in S mansoni these genes start with 9.
+```{r}
+day2somules[["percent.mt"]] <- PercentageFeatureSet(day2somules, pattern = "Smp-9")
+VlnPlot(day2somules, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+```
+
+It's important to consider multiple measurements when screening out low quality cells - especially when working on less well known organisms. So we generally plot metadata in several ways, and use the literature to decide what thresholds to use for QC filtering.
+
+Here, we can extract the metadata for visualisation.
+```{r}
+day2somules_metadata <- day2somules@meta.data
+```
+
+For example, we can use s density plot to look at the number of UMIs per cell in each of the three samples, and save that plot for later.
+```{r}
+# Visualize the number UMIs/transcripts per cell. We want to have at least 500 UMIs/cell if possible. Black lines at 500 and 100 UMIs
+day2somules_metadata %>% 
+  	ggplot(aes(color=batches, x=nCount_RNA, fill= batches)) + 
+  	geom_density(alpha = 0.2) + 
+  	scale_x_log10() + 
+  	theme_classic() +
+  	ylab("Cell density") +
+  	geom_vline(xintercept = 500) +
+  	geom_vline(xintercept = 1000)+
+  	ggtitle("UMIs per cell")
+ggsave("raw_umisPerCell_somules_v10.pdf", width = 20, height = 15, units = c('cm'))
+```
+
+What do you see here? What actions might you take based on this plot?
+
+```{r}
+# Visualize the distribution of genes detected per cell via histogram
+day2somules_metadata %>% 
+  	ggplot(aes(color=batches, x=nFeature_RNA, fill=batches)) + 
+  	geom_density(alpha = 0.2) + 
+  	theme_classic() +
+  	scale_x_log10() + 
+  	geom_vline(xintercept = 300)+
+  	ggtitle("Genes per cell")
+ggsave("raw_genesPerCell_somules_v10.pdf", width = 20, height = 15, units = c('cm'))
+```
+
+```{r}
+day2somules_metadata %>% 
+  	ggplot(aes(x=nCount_RNA, y=nFeature_RNA, color=percent.mt)) + 
+  	geom_point() + 
+	scale_colour_gradient(low = "gray90", high = "black") +
+  	stat_smooth(method=lm) +
+  	scale_x_log10() + 
+  	scale_y_log10() + 
+  	theme_classic() +
+  	geom_vline(xintercept = 1000) +
+  	geom_hline(yintercept = 500) +
+  	facet_wrap(~batches)
+ggsave("raw_cgenesVumis_mito_somules_v10_bybatch.pdf", width = 20, height = 15, units = c('cm'))
+```
+
+Today we will keep it simple and apply the same threshold across the three samples, but you might be able to see the value of considering each sample separately.
+
+Now, we do a first round of filtering: remove those cells designated as doublets.
+```{r}
+day2somules <- subset(day2somules, subset = scDblFinder.class == "singlet")
+
+dim(day2somules) #shows number of genes and number of cells
+```
+
+```{r}
+#subsetting the datatset
+day2somules <- subset(day2somules, subset = nCount_RNA > 500 & percent.mt < 5)
+dim(day2somules) #shows number of genes and number of cells
+```
+
+This is a fairly permissive filtering - we may find some more low quality clusters later in the analysis.
+
+Here's lets save the filtered object for future use.
+```{r}
+saveRDS(day2somules, file = "day2somules_v10_firstfilt.rds") #saves this version of the dataset
+```
+
+If you had any issues filtering the data, you can import the prefiltered R object here.
+```{r}
+day2somules <- readRDS(file = "day2somules_v10_firstfilt.rds")
+```
+
+On to the next stage of analysis: initial normalisation and clustering
+
+```{r}
+day2somules <- NormalizeData(day2somules)
+day2somules <- FindVariableFeatures(day2somules, selection.method = "vst", nfeatures = 2000)
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(day2somules), 10)
+top10
+
+all.genes <- rownames(day2somules)
+day2somules <- ScaleData(day2somules, features = all.genes)
+```
+
+Now, we can look at look at gene expression scaled across the cells, and find variable features: genes.
+
+Here, we perform PCA on the scaled data. The most variable features selected earlier are used.
+```{r}
+day2somules <- RunPCA(day2somules, features = VariableFeatures(object = day2somules),npcs = 100) #shows top contributing features for the PCs
+VizDimLoadings(day2somules, dims = 1:2, reduction = "pca") #shows the weightings of top contributing features to pcs 1 and 2
+DimHeatmap(day2somules, dims = 1, cells = 500, balanced = TRUE) #plots heatmap of top 500 mist variable cells for PC1, with relative gene expression
+```
+
+It's possible to use JackStraw to randomly permute data in 1% chunks. Here with 100 replicates and for 100 PCs. However, for these data it's too slow for this tutorial - on my computer it took approximately 28 minutes. 
+
+An elbow plot is a quick way to assess the contribution of the principal components by percentage of variation.
+```{r}
+DefaultAssay(day2somules) <- "RNA"
+
+day2somules <- JackStraw(day2somules, num.replicate = 100, dims =100) #do the permutation
+day2somules <- ScoreJackStraw(day2somules, dims = 1:100) #extract the scores
+JackStrawPlot(day2somules, dims = 1:100) #plot the p-vals for PCs. Dashed line giives null distribution
+ggsave("day2somules_v10_jackstrawplot100.pdf", width = 30, height = 15, units = c('cm'))
+
+ElbowPlot(day2somules, ndims = 100)  #ranks PCs by percentage of variation. A clear dropoff is sometimes seen, though not really here.
+ggsave("day2somules_v10_elbowplot100.pdf")
+```
+
+```{r}
+day2somules <- FindNeighbors(day2somules, dims = 1:40) #here construct k-nearst neighbours graoh based on euclidean distance in PCA space, then refine edge weights based on Jaccard similarity. this takes the number of PCs previously determined as importan (here 15 PCs_)
+day2somules <- FindClusters(day2somules, resolution = 0.5) #this iteratively groups cells using Louvain algorithm (default). Resolution sets the granularity. 0.4-1.2 gives good results for ~3K cells, with larger number suiting larger datasets.
+day2somules <- RunUMAP(day2somules, dims = 1:40) #runs umap to visualise the clusters. Need to set the number of PCs
+DimPlot(day2somules, reduction = "umap") #visulaises the UMAP
+ggsave("day2somules_v10clust_40PC_0.4res_RNA.pdf")
+```
+
+Do a basic analysis to start with, using SCTransform. This function normalises and scales the data, and finds variable features. It hwas some improvements from earlier versions of Seurat (and replaces NormalizeData(), ScaleData(), and FindVariableFeatures()), though there are functions it's difficult to perform when the data is transformed with this method.
+```{r}
+# run sctransform
+day2somules <- SCTransform(day2somules, verbose = TRUE, vst.flavor = "v2")
+```
+
+The results of this are saved in a differnt 'assay' of the R object - so you can still use both, and the data aren't overwritten.
+
+Now, perform dimensionality reduction by PCA and UMAP embedding
+
+Here, we perform PCA on the scaled data. The most variable features selected earlier are used. This follows the same approach as when using the RNA assay we used above.
+```{r}
+day2somules <- RunPCA(day2somules, features = VariableFeatures(object = day2somules), npcs=100) #shows top contributing features for the PCs
+VizDimLoadings(day2somules, dims = 1:2, reduction = "pca") #shows the weightings of top contributing features to pcs 1 and 2
+DimHeatmap(day2somules, dims = 1, cells = 500, balanced = TRUE) #plots heatmap of top 500 mist variable cells for PC1, with relative gene expression
+```
+
+```{r}
+day2somules <- FindNeighbors(day2somules, dims = 1:40) #here construct k-nearst neighbours graoh based on euclidean distance in PCA space, then refine edge weights based on Jaccard similarity. this takes the number of PCs previously determined as importan (here 15 PCs_)
+day2somules <- FindClusters(day2somules, resolution = 0.5) #this iteratively groups cells using Louvain algorithm (default). Resolution sets the granularity. 0.4-1.2 gives good results for ~3K cells, with larger number suiting larger datasets.
+day2somules <- RunUMAP(day2somules, dims = 1:40) #runs umap to visualise the clusters. Need to set the number of PCs
+DimPlot(day2somules, reduction = "umap") #visulaises the UMAP
+ggsave("day2somules_v10clust_40PC_0.4res_SCT.pdf")
+```
+
+Now we have a UMAP representation of our cells, we can also use that to visualise the metadata.
+```{r}
+DimPlot(day2somules, reduction = "umap", group.by = "id", shuffle = TRUE) #visulaises the UMAP
+ggsave("day2somules_v10_40PC_0.5res_after_one_filt_shuffled_batch_SCT.pdf")
+
+FeaturePlot(day2somules, features="percent.mt", label=TRUE)
+ggsave("day2somules_v10_40PC_0.5res_after_one_filt_mt_SCT.pdf")
+
+```
+
+Here's lets save this analysed object for future use
+```{r}
+saveRDS(day2somules, file = "day2somules_v10_analysed.rds") #saves this version of the dataset
+```
+
+Marker identification
+Do a rough marker search
+```{r}
+PrepSCTFindMarkers(day2somules, assay = "SCT", verbose = TRUE)
+
+#find all markers
+day2somules.markers_roc_no_lbls <- FindAllMarkers(day2somules, only.pos = TRUE, min.pct = 0.0, logfc.threshold = 0.0, test.use = "roc", return.thresh = 0)
+
+day2somules.top5_roc_no_lbls=day2somules_v10.markers_roc_no_lbls %>% group_by(cluster) %>% top_n(n = 5, wt = myAUC)# groups the markers by cluster, then picks the top 5 most differentiually expressed markers
+write.csv(x=day2somules_v10.markers_roc_no_lbls, file="top5_markerz_roc_no_lbls_day2somules_v10_sept26.csv")
+write.csv(x=day2somules_v10.markers_roc_no_lbls, file="markerz_roc_no_lbls_day2somules_v10_sept26.csv")
+```
+
+Extension section
+
+Here are some options extras to the analysis you might want to try.
