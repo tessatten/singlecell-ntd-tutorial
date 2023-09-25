@@ -1,0 +1,232 @@
+---
+title: "2day_somules_extension_analysis"
+author:
+   - name: T Attenborough
+     affiliation: University of Glasgow
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document: 
+    theme: readable
+    highlight: pygments
+    keep_md: yes
+    code_download: true
+    toc: true
+    toc_float: 
+      collapsed: true
+---
+
+#Extension section
+
+This file contains some optional extras to the analysis you might want to try.
+
+If you have started a new session, you'll need to load the libraries again: here are the code chunks you'll need to load them.
+
+The first chunk sets up a function to check if packages are installed, install them if not and load them. The second chunk takes a list of the packages we'll need, and runs the function on them. After these two chunks, you should have loaded all the libraries you'll need.
+
+```{r}
+# function to check install and load packages
+load_library <- function(pkg) {
+  # check if package is installed
+  new_package <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  
+  # install any new packages
+  if (length(new_package)) 
+    install.packages(new_package, dependencies = TRUE, Ncpus = 6)
+  
+  # sapply to loop through and load packages
+  invisible(sapply(pkg, library, character.only = TRUE))
+  
+  # give message confirming load
+  message("The following packages are now loaded")
+  print(names(sessionInfo()$otherPkgs))
+}
+```
+
+Now, load the packages that you'll use in the session. Run this chunk each time you open R and and want to use this script.
+
+```{r}
+# use test
+packages <- c('tidyverse', 'Seurat', 'RColorBrewer', 'patchwork', 'clustree', 'patchwork', 'scDblFinder', 'BiocParallel', 'SingleCellExperiment')
+load_library(packages)
+```
+  
+Some packages may be more niche, and have more specific installation instructions, such as the below package for detecting doublets. If you need to do this, delete the hashes in the code chunk below, and run it.
+```{r}
+#if (!require("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+
+#BiocManager::install("scDblFinder")
+```
+
+And now you can load it.
+```{r}
+library(scDblFinder)
+```
+
+
+Here we save an object that contains today's date, so we can save any files with the date automatically.
+
+```{r}
+st=format(Sys.time(), "%Y-%m-%d") 
+st
+```
+
+In this file, you can work through some more extended pieces of analysis. To do this, you'll need the R object you've already been analysing. If it's not already in your environment, you can load it in here.
+```{r}
+day2somules <- readRDS(file = "day2somules_v10_analysed.rds")
+```
+
+#Finding the top markers of all clusters
+
+We previously found the top markers of our clusters individually. There's a simple way to find all the clusters with one function. Try the code below to see how it works. In this chunk, we're also creating a list that only contains the top 5 markers for each cluster. I've chosen to rank the genes by the column 'myAUC'. Have a look at the documentation here (https://satijalab.org/seurat/reference/findallmarkers). Why might I have chosen this, and what does it mean? Would you chose a different column?
+
+Import annotation information. I have collected this from the genome annotation file. 
+```{r}
+v10_genelist <- read.csv("v10_genes_with_descriptions_2023-04-17.csv", stringsAsFactors = FALSE, header = TRUE) #import the marker data from somule papaer
+v10_genelist$X <- NULL 
+```
+
+```{r}
+DefaultAssay(day2somules) <- "RNA"
+
+#find all markers
+day2somules.markers_roc_no_lbls <- FindAllMarkers(day2somules, only.pos = TRUE, min.pct = 0.0, logfc.threshold = 0.0, test.use = "roc", return.thresh = 0)
+
+day2somules.top5_roc_no_lbls=day2somules.markers_roc_no_lbls %>% group_by(cluster) %>% top_n(n = 5, wt = myAUC)# groups the markers by cluster, then picks the top 5 most differentiually expressed markers
+write.csv(x=day2somules.top5_roc_no_lbls, file="top5_markerz_roc_no_lbls_day2somules_v10_sept26_RNA.csv")
+write.csv(x=day2somules.markers_roc_no_lbls, file="markerz_roc_no_lbls_day2somules_v10_sept26_RNA.csv")
+```
+
+We can combine these files to see the information associated with our marker genes.
+```{r}
+day2somules.markers_roc_no_lbls$gene <- gsub('\\-', '_', day2somules.markers_roc_no_lbls$gene) #replace dashes in geneid with underscores
+
+day2somules.markers_roc_with_lbls <- day2somules.markers_roc_no_lbls %>% left_join(v10_genelist, by = c("gene" = "Gene.stable.ID")) #check the top 5 marker genes are also in the somule paper
+write.csv(x=day2somules.markers_roc_with_lbls, file=paste0('day2somules.markers_roc_with_lbls_annotate_', st, '.csv')) #save this as a csv
+
+day2somules.top5_roc_no_lbls$gene <- gsub('\\-', '_', day2somules.top5_roc_no_lbls$gene) #replace dashes in geneid with underscores
+
+day2somules.top5_roc_with_lbls <- day2somules.top5_roc_no_lbls %>% left_join(v10_genelist, by = c("gene" = "Gene.stable.ID")) #check the top 5 marker genes are also in the somule paper
+write.csv(x=day2somules.top5_roc_with_lbls, file=paste0('day2somules.top5_roc_with_lbls_annotate_', st, '.csv')) #save this as a csv
+```
+
+Now, you might want to try assigning cell identities to your clusters, using the list of top genes you've just generated. 
+
+Tips: you want to find genes that are broadly expressed in a cluster, but ideally specific to that cluster. How might you find those genes?
+
+You want all the cluster names to be unique - why might that be?
+```{r}
+day2somules <- RenameIdents(object = day2somules, 
+                               "0" = "my.cluster0",
+                               "1" = "my.cluster1",
+                               "2" = "my.cluster2",
+                               "3" = "my.cluster3",
+                               "4" = "my.cluster4",
+                               "5" = "my.cluster5",
+                               "6" = "my.cluster6",
+                               "7" = "my.cluster7",
+                               "8" = "my.cluster8",
+                               "9" = "my.cluster9",
+                               "10" = "my.cluster10",
+                               "11" = "my.cluster11",
+                               "12" = "my.cluster12",
+                               "13" = "my.cluster13",
+                               "14" = "my.cluster14",
+                               "15" = "my.cluster15",
+                               "16" = "my.cluster16")
+
+day2somules[["my.cluster.names"]] <- Idents(object = day2somules)
+```
+
+Hint: if you make a mistake labelling your clusters, you can use this code to set them back to the original numbers.
+```{r}
+Idents(day2somules) <- day2somules@meta.data$SCT_snn_res.0.5
+```
+
+
+Now we can make a plot of the clusters with the IDs that we've chosen, and make it a bit fancier with a custom colour palette.
+```{r}
+new_pal <- c("#c4b7cb","#007aaa","#ffb703","#c40c18","#fb8500","#7851a9","#00325b","#8ACB88","#107E7D", "#FB6376", "#57467B", "#FFFD82", "#2191FB", "#690500", "#B3E9C7", "#B57F50","#2C514C","#754043" )
+scales::show_col(new_pal)
+plot1 <- DimPlot(day2somules, reduction = "umap", label = FALSE, repel = TRUE, label.box = FALSE) + NoLegend() +scale_color_manual(values = new_pal)
+LabelClusters(plot1, id = "ident", color = 'black', size =4, repel = T,  box.padding = 1.75, max.overlaps=Inf)
+
+ggsave(paste("day2somules-myCustomLabelledlClusters_40PC_0.5res_-",st, ".pdf", sep = ""), width = 25, height = 15, units = c('cm'))
+```
+
+After an initial analysis, you might not feel you have the optimum clusters. There are a multitude of ways to investigate this. Remember, clustering a useful tool but it's not perfect. Once resolution might produce a great separation of tissue types but not sufficient detail within those types, and another analysis with different settings might show you the ideal detail on one tissue type but also produce clusters with very little to separate them in other tissues.
+
+One way to address this is to focus on one cluster (or a subset of clusters), and perform clustering on them alone. Several tools can be used for this, but is possible to subcluster using Seurat.
+
+First, we select the cluster of interest, and rerun SCTransform etc - this means that we're calcuating variable genes etc on only those present this cluster. I'm interested in whether there might be more diversity to uncover in the parenchyma cluster - which I think is cluster 7.
+```{r}
+day2somules.parenchyma <- subset(day2somules, subset=my.cluster.names %in% c("my.cluster7"))
+day2somules.parenchyma <- SCTransform(day2somules.parenchyma, verbose = TRUE)
+```
+
+Now, we calculate PCA etc again, as we did above
+Here, we perform PCA on the scaled data. The most variable features selected earlier are used. This follows the same approach as when using the RNA assay we used above.
+```{r}
+day2somules.parenchyma <- RunPCA(day2somules.parenchyma, features = VariableFeatures(object = day2somules.parenchyma), npcs=100) #shows top contributing features for the PCs
+VizDimLoadings(day2somules.parenchyma, dims = 1:2, reduction = "pca") #shows the weightings of top contributing features to pcs 1 and 2
+DimHeatmap(day2somules.parenchyma, dims = 1, cells = 50, balanced = TRUE) #plots heatmap of top 500 mist variable cells for PC1, with relative gene expression
+ElbowPlot(day2somules.parenchyma, ndims = 50)  #ranks PCs by percentage of variation. A clear dropoff is sometimes seen, though not really here.
+```
+
+Next comes clustering and plotting of clusters.
+```{r}
+day2somules.parenchyma <- FindNeighbors(day2somules.parenchyma, dims = 1:30) 
+day2somules.parenchyma <- FindClusters(day2somules.parenchyma, resolution=0.2) 
+day2somules.parenchyma <- RunUMAP(day2somules.parenchyma, dims = 1:30) 
+DimPlot(day2somules.parenchyma, reduction = "umap")
+ggsave("day2somules.parenchyma_30C_0.1res_cluststrimmed.pdf")
+```
+
+```{r}
+#find all markers
+day2somules.parenchyma.markers_roc_no_lbls <- FindAllMarkers(day2somules.parenchyma, only.pos = TRUE, min.pct = 0.0, logfc.threshold = 0.0, test.use = "roc", return.thresh = 0)
+```
+
+```{r}
+FeaturePlot(day2somules.parenchyma, features = "Smp-011830")
+#ggsave(paste("day2somules-Smp-179320-",st, ".pdf", sep = ""), width = 25, height = 15, units = c('cm'))
+```
+
+
+Optional: in your pairs, try subclustering a cluster (or group of clusters) of your choice, by adapting the code above.
+```{r}
+#put your code in here!
+```
+
+You might also want to experiment with the number of PCs, and the resolution, understand the data better and to chose the optimal value for your analysis - this might depend on your chosen approach.
+
+Have a look at how the same data look only using 10PCs - what do you notice?
+
+```{r}
+DefaultAssay(day2somules) <- "SCT"
+
+day2somules <- FindNeighbors(day2somules, dims = 1:10) #here construct k-nearst neighbours graoh based on euclidean distance in PCA space, then refine edge weights based on Jaccard similarity. this takes the number of PCs previously determined as importan (here 15 PCs_)
+day2somules <- FindClusters(day2somules, resolution = 0.5) #this iteratively groups cells using Louvain algorithm (default). Resolution sets the granularity. 0.4-1.2 gives good results for ~3K cells, with larger number suiting larger datasets.
+day2somules <- RunUMAP(day2somules, dims = 1:10) #runs umap to visualise the clusters. Need to set the number of PCs
+DimPlot(day2somules, reduction = "umap") #visulaises the UMAP
+ggsave("day2somules_v10clust_10PC_0.4res_SCT.pdf")
+```
+
+You can look at the same plots with your labels from earlier - which clusters have changes the most?
+```{r}
+DimPlot(day2somules, reduction = "umap", label = TRUE, repel = TRUE, group.by = "my.cluster.names")
+ggsave("day2somules_v10clust_10PC_0.4res_SCT_my.cluster.names.pdf")
+```
+
+Try adapting the code from above to see how using a different number of PCs and resolution changes your UMAP.
+```{r}
+#put your code in here!
+```
+
+Thoughts for discussion
+
+-What might you do next?
+
+-How might you choose genes for in-situ validations?
+
+-How might you extract a gene list from WBPS?
