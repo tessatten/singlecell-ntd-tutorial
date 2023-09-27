@@ -130,6 +130,8 @@ head(sample1@meta.data$orig.ident)
 
 If you're not sure which metadata are available, or you want a summary of metadata in each category, that's an easy way to check. Anything that comes after the R object name and a dollar sign is a metadata value so you can look at it in a table as above, or in a UMAP, once you've generated one.
 
+#Merging samples
+
 For today, we are going to combine all three of our samples simply, and run through an analysis of all three. Later on we'll be able to look at how similar the three samples are to each other. I usually will also run an analysis of each sample individually to make sure I understand the data, and the variability.
 
 This creates one object that contains all three samples.
@@ -165,6 +167,8 @@ sample2
 sample3
 ```
 
+#Doublet ID
+
 Doublets, or multiplets, form when two or more cells are associated with one cell barcode - for example you might have a 'cell' in your data that looks like a hybrid of a muscle and a neural cell. Since these don't describe a cell type found in the sample, we want to exclude these cells as much as possible. There are many tools/strategies, the below tool assigns each cell a doublet score, and assigns cells as doublets or singlets based on these scores and the expected percentage of doublets.
 
 This requires the packages 'scDblFinder', 'BiocParallel', 'SingleCellExperiment', if you have any trouble installing them, you can follow along here and import the QC-filtered object when we move onto the next stage of analysis.
@@ -180,6 +184,7 @@ day2somules <- as.Seurat(day2somules.sce)
 
 This has added another column of metadata to our data, which will be helpful later.
 
+#Mito %
 
 We commonly use % of mitochondrial transcripts to screen for dead/damaged cells - we want to exclude these kinds of cells. Thresholds of % mitochondrial reads vary, and for most non-model organisms there isn't an established threshold - the optimal threshold will also vary between tissue types.
 
@@ -188,6 +193,8 @@ This code chunk will calculate the percentage of transcripts mapping to mitochon
 day2somules[["percent.mt"]] <- PercentageFeatureSet(day2somules, pattern = "Smp-9")
 VlnPlot(day2somules, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
 ```
+
+#Plot for QC
 
 It's important to consider multiple measurements when screening out low quality cells - especially when working on less well known organisms. So we generally plot metadata in several ways, and use the literature to decide what thresholds to use for QC filtering.
 
@@ -240,6 +247,8 @@ day2somules_metadata %>%
 ggsave("raw_cgenesVumis_mito_somules_v10_bybatch.pdf", width = 20, height = 15, units = c('cm'))
 ```
 
+#QC filtering
+
 Today we will keep it simple and apply the same threshold across the three samples, but you might be able to see the value of considering each sample separately.
 
 Now, we do a first round of filtering: remove those cells designated as doublets.
@@ -257,6 +266,8 @@ dim(day2somules) #shows number of genes and number of cells
 
 This is a fairly permissive filtering - we may find some more low quality clusters later in the analysis.
 
+#Save and start next analysis
+
 Here's lets save the filtered object for future use.
 ```{r}
 saveRDS(day2somules, file = "day2somules_v10_firstfilt.rds") #saves this version of the dataset
@@ -266,6 +277,8 @@ If you had any issues filtering the data, you can import the prefiltered R objec
 ```{r}
 day2somules <- readRDS(file = "day2somules_v10_firstfilt.rds")
 ```
+
+#Normalisation and scaling
 
 On to the next stage of analysis: initial normalisation and clustering
 
@@ -280,6 +293,8 @@ all.genes <- rownames(day2somules)
 day2somules <- ScaleData(day2somules, features = all.genes)
 ```
 
+#PCA
+
 Now, we can look at look at gene expression scaled across the cells, and find variable features: genes.
 
 Here, we perform PCA on the scaled data. The most variable features selected earlier are used.
@@ -291,6 +306,8 @@ VizDimLoadings(day2somules, dims = 1:2, reduction = "pca")
 #plots heatmap of top 500 mist variable cells for PC1, with relative gene expression
 DimHeatmap(day2somules, dims = 1, cells = 500, balanced = TRUE) 
 ```
+
+#Jackstraw
 
 It's possible to use JackStraw to randomly permute data in 1% chunks. Here with 100 replicates and for 100 PCs. However, for these data it's too slow for this tutorial - on my computer it took approximately 28 minutes. 
 
@@ -307,6 +324,8 @@ ElbowPlot(day2somules, ndims = 100)  #ranks PCs by percentage of variation. A cl
 ggsave("day2somules_v10_elbowplot100.pdf")
 ```
 
+#Find clusters
+
 ```{r}
 #here construct k-nearst neighbours graoh based on euclidean distance in PCA space, then refine edge weights based on Jaccard similarity. this takes the number of PCs previously determined as important (here 40 PCs_)
 day2somules <- FindNeighbors(day2somules, dims = 1:40) 
@@ -319,6 +338,8 @@ DimPlot(day2somules, reduction = "umap")
 ggsave("day2somules_v10clust_40PC_0.4res_RNA.pdf")
 ```
 
+#SCTransform
+
 Do a basic analysis to start with, using SCTransform. This function normalises and scales the data, and finds variable features. It has some improvements from earlier versions of Seurat (and replaces NormalizeData(), ScaleData(), and FindVariableFeatures()), though there are functions it's difficult to perform when the data is transformed with this method.
 ```{r}
 # run sctransform
@@ -326,6 +347,8 @@ day2somules <- SCTransform(day2somules, verbose = TRUE)
 ```
 
 The results of this are saved in a different 'assay' of the R object - so you can still use both, and the data aren't overwritten.
+
+#PCA on SCT
 
 Now, perform dimensionality reduction by PCA and UMAP embedding
 
@@ -335,6 +358,7 @@ day2somules <- RunPCA(day2somules, features = VariableFeatures(object = day2somu
 VizDimLoadings(day2somules, dims = 1:2, reduction = "pca") #shows the weightings of top contributing features to PCs 1 and 2
 DimHeatmap(day2somules, dims = 1, cells = 500, balanced = TRUE) #plots heatmap of top 500 mist variable cells for PC1, with relative gene expression
 ```
+#CLustering on SCT
 
 ```{r}
 #here construct k-nearest neighbours graph based on euclidean distance in PCA space, then refine edge weights based on Jaccard similarity. this takes the number of PCs previously determined as important (here 40 PCs_)
@@ -355,6 +379,8 @@ Now we can show them together
 ```
 
 
+#Plot metadata
+
 Now we have a UMAP representation of our cells, we can also use that to visualise the metadata.
 ```{r}
 DimPlot(day2somules, reduction = "umap", group.by = "batches", shuffle = TRUE) #visualises the UMAP
@@ -366,12 +392,14 @@ ggsave("day2somules_v10_40PC_0.5res_after_one_filt_mt_SCT.pdf")
 
 What do you notice once the UMAP is coloured by sample? Is there anything you might do about this?
 
+#Save analysis
+
 Here's lets save this analysed object for future use
 ```{r}
 saveRDS(day2somules, file = "day2somules_v10_analysed.rds") #saves this version of the dataset
 ```
 
-## Marker identification
+# Marker identification
 
 We want to understand what the cell clusters might be. One approach to do that is find gene that are cluster markers - find differentially expressed genes that are descriptive of a cluster.
 
@@ -408,6 +436,8 @@ A brainstorm question: how might you use this list to choose a gene to use for i
 How else might you classify cell cluster tissue types?
 
 
+#Plot individual genes
+
 Now we can look at gene expression in these data by gene. The example below shows you ago 2-1. As above, remove the hash symbol in front of the word ggsave and run this chunk of code if you want to save the plot. If you want to look at a different gene, simply type the gene ID where "Smp-179320" currently sits. Remember to use - rather than _ ! We can visualise genes that we already know something about in the organism, to see if that gives us some clues
 ```{r}
 FeaturePlot(day2somules, features = "Smp-179320")
@@ -439,6 +469,7 @@ Can you find a pair genes whose products you might expect to interact, and see i
 #put your code in here!
 ```
 
+#Cluster IDs
 
 You want all the cluster names to be unique - why might that be?
 ```{r}

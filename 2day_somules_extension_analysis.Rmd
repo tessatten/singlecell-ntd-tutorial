@@ -110,6 +110,9 @@ day2somules.top5_roc_with_lbls <- day2somules.top5_roc_no_lbls %>% left_join(v10
 write.csv(x=day2somules.top5_roc_with_lbls, file=paste0('day2somules.top5_roc_with_lbls_annotate_', st, '.csv')) #save this as a csv
 ```
 
+
+#Assign cell identities
+
 Now, you might want to try assigning cell identities to your clusters, using the list of top genes you've just generated. 
 
 Tips: you want to find genes that are broadly expressed in a cluster, but ideally specific to that cluster. How might you find those genes?
@@ -154,6 +157,8 @@ LabelClusters(plot1, id = "ident", color = 'black', size =4, repel = T,  box.pad
 ggsave(paste("day2somules-myCustomLabelledlClusters_40PC_0.5res_-",st, ".pdf", sep = ""), width = 25, height = 15, units = c('cm'))
 ```
 
+#Subclustering
+
 After an initial analysis, you might not feel you have the optimum clusters. There are a multitude of ways to investigate this. Remember, clustering a useful tool but it's not perfect. Once resolution might produce a great separation of tissue types but not sufficient detail within those types, and another analysis with different settings might show you the ideal detail on one tissue type but also produce clusters with very little to separate them in other tissues.
 
 One way to address this is to focus on one cluster (or a subset of clusters), and perform clustering on them alone. Several tools can be used for this, but is possible to subcluster using Seurat.
@@ -197,6 +202,8 @@ Optional: in your pairs, try subclustering a cluster (or group of clusters) of y
 ```{r}
 #put your code in here!
 ```
+
+#Explore PCs and res
 
 You might also want to experiment with the number of PCs, and the resolution, understand the data better and to chose the optimal value for your analysis - this might depend on your chosen approach.
 
